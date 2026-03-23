@@ -26,7 +26,11 @@ class PeripheralEncoder(nn.Module):
         # Learned weighted pooling: produces per-token importance score within a block
         self.weight_proj = nn.Linear(hidden_dim, 1)
 
-        # Layer norm applied after pooling
+        # Project concatenated statistics (mean, std, max) back to hidden_dim
+        # 3 * hidden_dim -> hidden_dim
+        self.stats_proj = nn.Linear(hidden_dim * 3, hidden_dim)
+
+        # Layer norm applied after projection
         self.layer_norm = nn.LayerNorm(hidden_dim)
 
         # Positional embeddings for blocks (will be lazily expanded if needed)
@@ -78,9 +82,23 @@ class PeripheralEncoder(nn.Module):
         # Handle fully-masked blocks (all -inf -> nan after softmax)
         weights = weights.nan_to_num(0.0)
 
-        # Weighted sum: (batch, num_blocks, D)
+        # Weighted mean: (batch, num_blocks, D)
         # weights: (batch, num_blocks, block_size) @ blocks: (batch, num_blocks, block_size, D)
-        peripheral_map = torch.einsum('bnk,bnkd->bnd', weights, blocks)
+        weighted_mean = torch.einsum('bnk,bnkd->bnd', weights, blocks)
+
+        # Standard deviation per block: (batch, num_blocks, D)
+        # Use weighted mean as center for variance calculation
+        diff = blocks - weighted_mean.unsqueeze(2)  # (batch, num_blocks, block_size, D)
+        weighted_var = torch.einsum('bnk,bnkd->bnd', weights, diff ** 2)
+        block_std = (weighted_var + 1e-8).sqrt()
+
+        # Max pool per block: (batch, num_blocks, D)
+        block_max = blocks.max(dim=2).values
+
+        # Concatenate statistics and project back to hidden_dim
+        # (batch, num_blocks, 3*D) -> (batch, num_blocks, D)
+        combined = torch.cat([weighted_mean, block_std, block_max], dim=-1)
+        peripheral_map = self.stats_proj(combined)
 
         # Layer norm
         peripheral_map = self.layer_norm(peripheral_map)
