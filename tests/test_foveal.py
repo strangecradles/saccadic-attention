@@ -11,12 +11,25 @@ def processor():
 
 
 def test_output_shape(processor):
-    """Output should be (batch, hidden_dim)."""
+    """Output should be (batch, hidden_dim) + accumulated context."""
     x = torch.randn(2, 128, 64)
     state = torch.randn(2, 64)
     fixation = torch.tensor([64, 32])
-    out = processor(x, fixation, state)
+    out, acc = processor(x, fixation, state)
     assert out.shape == (2, 64)
+    assert acc.shape == (2, 16, 64)  # first saccade: window_size tokens
+
+
+def test_accumulated_context_grows(processor):
+    """Accumulated context should grow with each saccade."""
+    x = torch.randn(1, 128, 64)
+    state = torch.randn(1, 64)
+    state, acc = processor(x, torch.tensor([32]), state)
+    assert acc.shape == (1, 16, 64)
+    state, acc = processor(x, torch.tensor([64]), state, accumulated_context=acc)
+    assert acc.shape == (1, 32, 64)  # two windows concatenated
+    state, acc = processor(x, torch.tensor([96]), state, accumulated_context=acc)
+    assert acc.shape == (1, 48, 64)  # three windows
 
 
 def test_fixation_at_start(processor):
@@ -24,7 +37,7 @@ def test_fixation_at_start(processor):
     x = torch.randn(1, 128, 64)
     state = torch.randn(1, 64)
     fixation = torch.tensor([0])
-    out = processor(x, fixation, state)
+    out, acc = processor(x, fixation, state)
     assert out.shape == (1, 64)
     assert not torch.isnan(out).any()
 
@@ -34,7 +47,7 @@ def test_fixation_at_end(processor):
     x = torch.randn(1, 128, 64)
     state = torch.randn(1, 64)
     fixation = torch.tensor([127])
-    out = processor(x, fixation, state)
+    out, acc = processor(x, fixation, state)
     assert out.shape == (1, 64)
     assert not torch.isnan(out).any()
 
@@ -44,7 +57,7 @@ def test_short_sequence(processor):
     x = torch.randn(1, 8, 64)  # 8 < 16 (window_size)
     state = torch.randn(1, 64)
     fixation = torch.tensor([4])
-    out = processor(x, fixation, state)
+    out, acc = processor(x, fixation, state)
     assert out.shape == (1, 64)
 
 
@@ -53,7 +66,7 @@ def test_gradient_flow(processor):
     x = torch.randn(2, 64, 64, requires_grad=True)
     state = torch.randn(2, 64, requires_grad=True)
     fixation = torch.tensor([32, 16])
-    out = processor(x, fixation, state)
+    out, acc = processor(x, fixation, state)
     loss = out.sum()
     loss.backward()
     assert x.grad is not None
@@ -66,7 +79,7 @@ def test_different_fixations_give_different_outputs(processor):
     torch.manual_seed(42)
     x = torch.randn(1, 128, 64)
     state = torch.randn(1, 64)
-    out1 = processor(x, torch.tensor([10]), state)
-    out2 = processor(x, torch.tensor([100]), state)
+    out1, _ = processor(x, torch.tensor([10]), state)
+    out2, _ = processor(x, torch.tensor([100]), state)
     # Outputs should differ since they attend to different windows
     assert not torch.allclose(out1, out2)

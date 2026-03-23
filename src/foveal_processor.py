@@ -41,15 +41,19 @@ class FovealProcessor(nn.Module):
         x: torch.Tensor,
         fixation_point: torch.Tensor,
         state: torch.Tensor,
-    ) -> torch.Tensor:
+        accumulated_context: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x: (batch, seq_len, hidden_dim) — full token embeddings
             fixation_point: (batch,) — integer fixation positions per batch element
             state: (batch, hidden_dim) — current accumulated state
+            accumulated_context: (batch, prev_tokens, hidden_dim) — tokens from all
+                previous fixation windows, or None for the first saccade
 
         Returns:
             updated_state: (batch, hidden_dim)
+            new_accumulated_context: (batch, prev_tokens + window_size, hidden_dim)
         """
         batch, seq_len, hidden_dim = x.shape  # (B, N, D)
 
@@ -57,23 +61,32 @@ class FovealProcessor(nn.Module):
         # window: (batch, window_size, hidden_dim)
         window = self._extract_windows(x, fixation_point)
 
-        # Prepend state as CLS token: (batch, 1, D)
-        state_token = state.unsqueeze(1)
-        # window_with_state: (batch, 1 + window_size, D)
-        window_with_state = torch.cat([state_token, window], dim=1)
+        # Build full context: [CLS state] + [previous fixation windows] + [current window]
+        state_token = state.unsqueeze(1)  # (batch, 1, D)
+        if accumulated_context is not None:
+            # full_context: (batch, 1 + prev_tokens + window_size, D)
+            full_context = torch.cat([state_token, accumulated_context, window], dim=1)
+        else:
+            # full_context: (batch, 1 + window_size, D)
+            full_context = torch.cat([state_token, window], dim=1)
 
-        # Self-attention over the window (with CLS token)
-        # attn_out: (batch, 1 + window_size, D)
-        normed = self.norm1(window_with_state)
+        # Self-attention over the full accumulated context
+        normed = self.norm1(full_context)
         attn_out, _ = self.attn(normed, normed, normed)
-        window_with_state = window_with_state + attn_out
+        full_context = full_context + attn_out
 
         # FFN on the CLS token output
         # cls_out: (batch, D)
-        cls_out = window_with_state[:, 0, :]
+        cls_out = full_context[:, 0, :]
         cls_out = cls_out + self.ffn(self.norm2(cls_out))
 
-        return cls_out  # (batch, hidden_dim)
+        # Update accumulated context (exclude CLS token, include new window)
+        if accumulated_context is not None:
+            new_accumulated = torch.cat([accumulated_context, window], dim=1)
+        else:
+            new_accumulated = window  # (batch, window_size, D)
+
+        return cls_out, new_accumulated  # (batch, D), (batch, accumulated_tokens, D)
 
     def _extract_windows(
         self,
