@@ -1,0 +1,27 @@
+[
+  {
+    "context_length": 1024,
+    "accuracy": 0.0,
+    "fixation_distance": 325.88
+  },
+  {
+    "context_length": 2048,
+    "accuracy": 1.0,
+    "fixation_distance": 667.4166666666666
+  },
+  {
+    "context_length": 4096,
+    "accuracy": 0.005,
+    "fixation_distance": 1310.4
+  },
+  {
+    "context_length": 8192,
+    "accuracy": 0.0,
+    "fixation_distance": 2768.733333333333
+  },
+  {
+    "context_length": 16384,
+    "accuracy": 0.0,
+    "fixation_distance": 5369.55
+  }
+]
