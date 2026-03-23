@@ -1,0 +1,21 @@
+# Autoresearch loop (untracked by design)
+results.tsv
+run.log
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Checkpoints and results
+checkpoints/
+results/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
