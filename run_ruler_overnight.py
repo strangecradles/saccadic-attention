@@ -27,7 +27,7 @@ from ruler_tasks import get_task, get_head_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-TASKS = ['S-NIAH', 'MK-NIAH', 'MV-NIAH', 'VT-2', 'VT-3', 'VT-4', 'CWE']
+TASKS = ['S-NIAH', 'MK-NIAH', 'VT-2', 'VT-3', 'VT-4']
 CONTEXT_LENGTHS = [4096, 8192, 16384, 32768]
 NUM_TRAIN = 2000
 NUM_VAL = 100
@@ -39,9 +39,9 @@ GRAD_CLIP = 1.0
 WARMUP_STEPS = 50
 SUPERVISED_WARMUP_STEPS = 300
 SUPERVISED_WARMUP_WEIGHT = 2.0
-GUMBEL_ANNEAL_STEPS = 800
-MAX_TIME = 1800  # 30 min cap
-PATIENCE = 1000
+TEMP_ANNEAL_STEPS = 800  # soft routing temperature annealing
+MAX_TIME = 1800  # 30 min per config
+PATIENCE = 2000  # match debug script — model needs ~600 steps before first improvement
 VAL_EVERY = 50
 ENTROPY_BONUS = 0.01
 BLOCK_SIZE = 8
@@ -72,9 +72,10 @@ def collate(batch):
 
 # ── Gumbel temperature ───────────────────────────────────────────────────────
 
-def gumbel_temp(step):
-    p = min(step / max(GUMBEL_ANNEAL_STEPS, 1), 1.0)
-    return 1.0 + (0.1 - 1.0) * p
+def routing_temp(step):
+    """Anneal from 5.0 (soft) to 0.1 (hard) over training."""
+    p = min(step / max(TEMP_ANNEAL_STEPS, 1), 1.0)
+    return 5.0 + (0.1 - 5.0) * p
 
 
 # ── Quick validation ─────────────────────────────────────────────────────────
@@ -203,18 +204,18 @@ def train_saccadic(model, train_data, val_data, task_name, device):
             # Forward
             ids = batch['input_ids'].to(device)
             labs = batch['labels'].to(device)
-            model.set_gumbel_temperature(gumbel_temp(step))
+            model.set_gumbel_temperature(routing_temp(step))
 
             out = model(ids, labels=labs)
             loss = out['loss']
 
             # Entropy bonus
-            ent_total = torch.tensor(0.0)
+            ent_total = torch.tensor(0.0, device=device)
             ent_count = 0
             for _, info in out['fixation_info'].items():
                 for logits in info['fixation_logits']:
                     p = F.softmax(logits, dim=-1)
-                    ent_total = ent_total + (-(p * (p + 1e-8).log()).sum(-1).mean()).to(ent_total.device)
+                    ent_total = ent_total + (-(p * (p + 1e-8).log()).sum(-1).mean())
                     ent_count += 1
             if ent_count:
                 loss = loss - ENTROPY_BONUS * ent_total / ent_count

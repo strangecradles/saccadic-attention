@@ -365,8 +365,7 @@ def get_task(task_name, tokenizer, **kwargs):
 def get_head_config(task_name):
     """Return (head_class, head_kwargs, num_saccades) for a task."""
     from saccadic_qwen import (
-        DigitClassificationHead, MultiValueHead,
-        VariableTrackingHead, WordPredictionHead,
+        DigitClassificationHead, MultiValueHead, VariableTrackingHead,
     )
     configs = {
         'S-NIAH':  (DigitClassificationHead, {'input_dim': 1536, 'n_digits': 7}, 3),
@@ -375,6 +374,5 @@ def get_head_config(task_name):
         'VT-2':    (VariableTrackingHead, {'input_dim': 1536, 'n_digits': 4}, 2),
         'VT-3':    (VariableTrackingHead, {'input_dim': 1536, 'n_digits': 4}, 3),
         'VT-4':    (VariableTrackingHead, {'input_dim': 1536, 'n_digits': 4}, 4),
-        'CWE':     (WordPredictionHead, {'input_dim': 1536, 'vocab_size': 100, 'k': 5}, 10),
     }
     return configs[task_name]
