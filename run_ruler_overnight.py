@@ -396,7 +396,7 @@ def main():
 
             # Determine task config
             task_configs = {
-                'S-NIAH': (7, 3), 'MK-NIAH': (7, 3),
+                'S-NIAH': (5, 3), 'MK-NIAH': (5, 3),
                 'VT-2': (4, 2), 'VT-3': (4, 3), 'VT-4': (4, 4),
             }
             n_digits, num_saccades = task_configs[task_name]

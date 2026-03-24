@@ -51,7 +51,7 @@ CITIES = ['Chicago', 'London', 'Tokyo', 'Paris', 'Sydney', 'Berlin', 'Mumbai',
 class SingleNeedleTask:
     """Insert one key-value pair (city → 7-digit number) in essay filler."""
     NAME = 'S-NIAH'
-    N_DIGITS = 7
+    N_DIGITS = 5  # 5 digits to match proven debug config (7 was too hard to converge in 30 min)
 
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
@@ -97,7 +97,7 @@ class SingleNeedleTask:
 class MultiKeyNeedleTask:
     """1 target needle + 3 distractor needles. Query asks for target city."""
     NAME = 'MK-NIAH'
-    N_DIGITS = 7
+    N_DIGITS = 5
     N_DISTRACTORS = 3
 
     def __init__(self, tokenizer):
