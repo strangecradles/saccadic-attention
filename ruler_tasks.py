@@ -12,34 +12,46 @@ Each task produces (input_text, labels, metadata) for training and evaluation.
 import random
 import string
 
-# ── Paul Graham-style filler text ─────────────────────────────────────────────
+# ── Filler text: 5000 unique Wikipedia paragraphs (no repeats per context) ────
 
-PG_ESSAYS = [
-    "The most important thing in a startup is not the idea, but the people. Great founders can make almost any idea work, while mediocre founders will struggle even with the best idea. This is counterintuitive because ideas seem like the scarce resource, but in practice execution matters far more. The reason is that ideas change as you work on them, and the quality of that change depends on the quality of the people doing the work.",
-    "When you start a company, the first thing you notice is how few things you know. You thought you understood the market, but actually you were wrong about almost everything. The good news is that everyone is wrong about almost everything at the start. The winners are the ones who figure out the truth fastest. Speed of learning is the most important competitive advantage in a startup.",
-    "The best essays are like conversations with a smart friend. They take you through a chain of reasoning, where each step follows naturally from the last. The writer doesn't just state conclusions; they show you the path that led to those conclusions. This is harder than it sounds, because in real thinking the path is rarely straight. You have to clean it up while keeping the feeling of discovery.",
-    "There are two types of schedule: the maker's schedule and the manager's schedule. Managers' days are divided into one-hour blocks. They can schedule meetings whenever they want because meetings are the norm. But makers need long stretches of uninterrupted time to do creative work. A single meeting in the middle of the afternoon can blow a whole half-day for a maker, because it breaks the flow they need.",
-    "The hardest part of starting a company is the emotional roller coaster. One day you feel like you're building the next Google, and the next day you feel like the whole thing is falling apart. Both feelings are probably wrong. The reality is somewhere in between, but the swings between extremes are exhausting. The founders who succeed are the ones who can keep going through the downs.",
-    "Good design is simple. Not simple in the sense of easy, but simple in the sense of having nothing unnecessary. This principle applies to everything from visual design to software architecture to company strategy. The hard part is knowing what's unnecessary, because it often takes a deep understanding of the problem to see what can be removed.",
-    "Technology progresses through a series of replacements. Each new technology displaces the previous one, not by being better at everything, but by being better at the things that matter most to the marginal user. This means that established technologies often look superior by most metrics, but the new technology wins anyway because it's better on the one metric that matters.",
-    "The best way to predict the future is to build it. This sounds like a platitude, but it's actually a useful strategy. Instead of trying to guess what the future will look like and then building for it, you can just start building things and see which ones work. The future is shaped by the things that get built, so builders have disproportionate influence over it.",
-    "Writing clearly is thinking clearly. If you can't explain something in simple terms, you probably don't understand it well enough. This is why writing is such a useful tool for learning: it forces you to organize your thoughts and identify the gaps in your understanding. The act of trying to explain something clearly often leads to new insights.",
-    "The biggest risk in a startup is not building something nobody wants. It's building something that some people want but not enough people want enough. The difference between a successful product and a failed one is often not whether it works, but whether it solves a problem that enough people care about strongly enough to switch from whatever they're currently using.",
-]
+def _load_wikitext_filler():
+    import os, json
+    filler_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wikitext_filler.json')
+    if os.path.exists(filler_path):
+        with open(filler_path) as f:
+            return json.load(f)
+    from datasets import load_dataset
+    ds = load_dataset('wikitext', 'wikitext-103-raw-v1', split='train')
+    paras, seen = [], set()
+    for row in ds:
+        t = row['text'].strip()
+        if len(t) > 100 and t not in seen and not t.startswith('='):
+            paras.append(t)
+            seen.add(t)
+        if len(paras) >= 5000:
+            break
+    with open(filler_path, 'w') as f:
+        json.dump(paras, f)
+    return paras
+
+_WIKI_PARAS = _load_wikitext_filler()
 
 
-def _make_filler(tokenizer, ctx_len, reserved_tokens):
-    """Generate filler text from PG essays to fill context."""
-    filler_texts = []
-    total = 0
+def _make_filler(tokenizer, ctx_len, reserved_tokens, rng=None):
+    """Generate filler from unique Wikipedia paragraphs. No paragraph repeats."""
+    if rng is None:
+        rng = random.Random()
     budget = ctx_len - reserved_tokens
-    rng = random.Random()
-    while total < budget + 500:  # overshoot then truncate
-        essay = rng.choice(PG_ESSAYS)
-        tokens = tokenizer.encode(essay)
-        filler_texts.extend(tokens)
-        total += len(tokens)
-    return filler_texts[:budget]
+    # Shuffle and draw without replacement to avoid repeats
+    indices = list(range(len(_WIKI_PARAS)))
+    rng.shuffle(indices)
+    filler = []
+    for idx in indices:
+        tokens = tokenizer.encode(" " + _WIKI_PARAS[idx])
+        filler.extend(tokens)
+        if len(filler) >= budget:
+            break
+    return filler[:budget]
 
 
 # ── Task 1a: Single Needle in a Haystack (S-NIAH) ────────────────────────────
@@ -71,7 +83,7 @@ class SingleNeedleTask:
             answer_ids = self.tokenizer.encode(" " + number)
             reserved = len(needle_ids) + len(query_ids) + len(answer_ids)
 
-            filler = _make_filler(self.tokenizer, ctx_len, reserved)
+            filler = _make_filler(self.tokenizer, ctx_len, reserved, rng=rng2)
             pos = rng2.randint(0, len(filler))
 
             full = filler[:pos] + needle_ids + filler[pos:] + query_ids + answer_ids
@@ -121,7 +133,7 @@ class MultiKeyNeedleTask:
             answer_ids = self.tokenizer.encode(" " + numbers[0])
             reserved = sum(len(n) for n in needle_ids_list) + len(query_ids) + len(answer_ids)
 
-            filler = _make_filler(self.tokenizer, ctx_len, reserved)
+            filler = _make_filler(self.tokenizer, ctx_len, reserved, rng=rng2)
             # Insert needles at random positions
             positions = sorted(rng2.sample(range(len(filler)), min(len(cities), len(filler))))
             target_pos = positions[0]
@@ -176,7 +188,7 @@ class MultiValueNeedleTask:
             answer_ids = self.tokenizer.encode(answer_text)
             reserved = sum(len(n) for n in needle_ids_list) + len(query_ids) + len(answer_ids)
 
-            filler = _make_filler(self.tokenizer, ctx_len, reserved)
+            filler = _make_filler(self.tokenizer, ctx_len, reserved, rng=rng2)
             positions = sorted(rng2.sample(range(max(1, len(filler))),
                                            min(self.N_VALUES, max(1, len(filler)))))
             full = list(filler)
@@ -244,7 +256,7 @@ class VariableTrackingTask:
             answer_ids = self.tokenizer.encode(" " + final_value)
             reserved = sum(len(s) for s in stmt_ids) + len(query_ids) + len(answer_ids)
 
-            filler = _make_filler(self.tokenizer, ctx_len, reserved)
+            filler = _make_filler(self.tokenizer, ctx_len, reserved, rng=rng2)
             seg = max(1, len(filler) // (self.chain_length + 1))
             full = list(filler)
             target_positions = []

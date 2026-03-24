@@ -41,24 +41,35 @@ def log(msg): print(msg, file=sys.stderr, flush=True)
 
 # ── Simple Passkey Dataset (uses Qwen tokenizer) ─────────────────────────────
 
-FILLER = [
-    "The weather was pleasant and the sky was clear.",
-    "Several researchers gathered to discuss the latest findings.",
-    "The library contained thousands of books on various topics.",
-    "Traffic moved slowly through the busy intersection.",
-    "A gentle breeze rustled through the autumn leaves.",
-    "The project deadline was approaching rapidly.",
-    "Students worked diligently on their assignments.",
-    "The old building stood at the corner of the street.",
-    "New developments in technology continued to emerge.",
-    "The garden was well maintained throughout the year.",
-]
+def _load_wikitext_filler():
+    """Load 5000 unique Wikipedia paragraphs. No paragraph repeats within a context window."""
+    import os, json
+    filler_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wikitext_filler.json')
+    if os.path.exists(filler_path):
+        with open(filler_path) as f:
+            return json.load(f)
+    # Fallback: download
+    from datasets import load_dataset
+    ds = load_dataset('wikitext', 'wikitext-103-raw-v1', split='train')
+    paras, seen = [], set()
+    for row in ds:
+        t = row['text'].strip()
+        if len(t) > 100 and t not in seen and not t.startswith('='):
+            paras.append(t)
+            seen.add(t)
+        if len(paras) >= 5000:
+            break
+    with open(filler_path, 'w') as f:
+        json.dump(paras, f)
+    return paras
+
+FILLER = _load_wikitext_filler()
 
 
 class PasskeyDataset(Dataset):
     def __init__(self, n, ctx_len, tokenizer, seed=42):
         self.rng = random.Random(seed)
-        self.filler_enc = [tokenizer.encode(" " + s) for s in FILLER]
+        self.tokenizer = tokenizer
         self.prompt = tokenizer.encode(" What is the secret number? The secret number is")
         self.samples = [self._make(i, ctx_len, tokenizer) for i in range(n)]
 
@@ -68,9 +79,14 @@ class PasskeyDataset(Dataset):
         pk_ids = tokenizer.encode(f" The secret number is {pk}.")
         ans_ids = tokenizer.encode(" " + pk)
         budget = ctx_len - len(pk_ids) - len(self.prompt) - len(ans_ids)
+        # Draw unique Wikipedia paragraphs (no repeats per context window)
+        indices = list(range(len(FILLER)))
+        rng.shuffle(indices)
         fill = []
-        while len(fill) < budget:
-            fill.extend(rng.choice(self.filler_enc))
+        for idx in indices:
+            fill.extend(tokenizer.encode(" " + FILLER[idx]))
+            if len(fill) >= budget:
+                break
         fill = fill[:budget]
         pos = rng.randint(0, len(fill))
         full = fill[:pos] + pk_ids + fill[pos:] + self.prompt + ans_ids
