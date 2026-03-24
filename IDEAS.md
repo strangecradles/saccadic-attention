@@ -196,6 +196,74 @@ After each saccade, the update cascades both UP (foveal → blocks → sections 
 
 **This reframes the entire architecture in the language of Bayesian optimal experimental design** — each saccade is an experiment, the controller is choosing experiments to maximally reduce posterior uncertainty about the answer.
 
+### Idea 10: Multi-Foveal Attention (Parallel Fixations per Saccade)
+
+**The problem:** The current architecture deploys one fovea per saccade — one 128-token window per sequential step. But unlike the human eye, which has a single physical fovea, our model has no hardware constraint forcing it to look at only one place at a time. A GPU can process multiple attention windows in parallel with virtually no additional wall-clock time. We're artificially limiting ourselves to biological constraints we don't actually have.
+
+**The idea:** Each saccade step deploys F foveae simultaneously, each fixating on a different block. All F windows are processed in parallel (batched attention), their results are integrated, and THEN the next saccade step begins. This gives the model broad spatial coverage within each step while preserving sequential reasoning between steps.
+```
+Single fovea (current):
+  Step 1: [===window===]                                    → update state
+  Step 2:                        [===window===]             → update state
+  Step 3:                                        [===window===] → answer
+  (3 sequential steps, 1 region per step)
+
+Multi-foveal (F=3):
+  Step 1: [===win A===]  [===win B===]  [===win C===]       → integrate → update state
+  Step 2: [===win D===]  [===win E===]                      → integrate → answer
+  (2 sequential steps, but 5 regions covered)
+```
+
+**Why this isn't just "make the window bigger":** Three separate 128-token windows can look at the beginning, middle, and end of a document simultaneously. A single 384-token contiguous window can only look at one region. Multi-foveal gives spatial diversity that a wider window cannot.
+
+**Controller modification:** Instead of outputting one fixation point, the controller outputs F points. Options:
+- **Top-F selection:** Score all blocks, take the F highest-scoring positions
+- **Sequential with masking:** Run the controller F times, masking already-selected blocks each time (lets each fovea consider what the others are already covering)
+- **Diversity-encouraged:** Add a repulsion term so foveae spread out rather than clustering in one region
+```python
+# Top-F multi-foveal selection
+scores = controller(peripheral_map, state)
+top_f = torch.topk(scores, k=num_foveae).indices  # e.g., 3 positions
+
+# Parallel foveal processing (all windows at once)
+windows = torch.stack([extract_window(tokens, pos) for pos in top_f])
+foveal_outputs = foveal_processor(windows)  # batched — runs in parallel on GPU
+
+# Cross-attend to integrate findings from all foveae
+integrated = cross_attention(query=state, key=concat(foveal_outputs), value=concat(foveal_outputs))
+```
+
+**The key tradeoff — parallel breadth vs. sequential depth:**
+
+Within a saccade step, multiple foveae fire simultaneously — fovea B's location CANNOT depend on what fovea A found, because they run in parallel. Between saccade steps, the next step's fixation choices ARE conditioned on previous results. So:
+
+- **Parallel breadth (F):** More regions explored per step, but no reasoning between them within the step
+- **Sequential depth (S):** Each step reasons about what previous steps found, but only one step at a time
+
+The optimal F × S allocation depends on the task:
+- Independent fact gathering (find 5 separate entities): high F, low S
+- Chained reasoning (find A, use A to find B, use B to find C): low F, high S
+- Real tasks (mix of both): moderate F and S
+
+**Both F and S are tunable at inference time.** This gives two new scaling axes:
+1. Sequential reasoning depth (S = num_saccades)
+2. Parallel exploration breadth (F = num_foveae)
+
+Total attention cost: S × F × k². Trade off depth and breadth within any compute budget.
+
+**Composes with accumulated foveal context (Idea 1):** With F=3 foveae per step, the working memory grows by 384 tokens per saccade instead of 128. Cross-referencing between the three fixation regions happens naturally within the accumulated window — all tokens from all foveae can attend to each other.
+
+**Composes with global peripheral update (Idea 2):** After each multi-foveal step, the peripheral map updates based on ALL F foveal outputs, not just one. The map gets 3x more information per update step, making subsequent saccade planning much more informed.
+
+**Biological note:** While humans have one fovea, some birds (particularly raptors like eagles) have TWO foveae per eye — one for high-acuity forward vision and one for lateral/monocular vision. So multi-foveal vision isn't even biologically unprecedented. We're just extending the concept to an arbitrary number of parallel fixation points, which is the natural thing to do when you're not constrained by physical optics.
+
+**Cost comparison:**
+- Single fovea, 5 saccades: 5 × 128² = 81,920 ops, 5 sequential steps
+- 3 foveae, 2 saccades: 2 × 3 × 128² = 98,304 ops, 2 sequential steps (1.2x compute, 2.5x faster wall-clock)
+- Full attention on 4096: 4096² = 16.7M ops (still 170x more expensive than multi-foveal)
+
+**When to implement:** After v2 changes (accumulated context + global peripheral update). Those fix the current state-vector bottleneck. Multi-foveal addresses the sequential depth bottleneck, which becomes the binding constraint only after the state bottleneck is removed.
+
 ---
 
 ## Theoretical Connections (for paper framing)
