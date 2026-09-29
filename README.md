@@ -48,6 +48,8 @@ Input tokens (batch, seq_len, hidden_dim)
 
 ## Results
 
+![Passkey retrieval and multi-hop reasoning accuracy](docs/figures/results.png)
+
 ### Passkey Retrieval (GPT-2 backbone, 4096 context)
 
 | Experiment | Accuracy | Fixation Distance | Notes |
